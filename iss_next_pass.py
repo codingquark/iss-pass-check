@@ -386,7 +386,7 @@ def find_visible_passes(
 
             if set_time is not None:
                 _, set_az, _, _ = iss_info(set_time)
-                check_times = [rise_time] + ([max_time] if max_time else []) + [set_time]
+                check_times = [rise_time] + ([max_time] if max_time is not None else []) + [set_time]
                 results = [visibility(t) for t in check_times]
                 best_magnitude = min((mag for vis, mag in results if vis), default=99.0)
 
