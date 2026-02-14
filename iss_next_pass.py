@@ -398,7 +398,7 @@ def find_visible_passes(
                     passes.append(PassInfo(
                         rise_time=rise_time.utc_datetime(),
                         set_time=set_time.utc_datetime(),
-                        max_altitude_time=(max_time or rise_time).utc_datetime(),
+                        max_altitude_time=(max_time if max_time is not None else rise_time).utc_datetime(),
                         duration_seconds=duration,
                         max_altitude_degrees=max_alt,
                         rise_azimuth=rise_az,
