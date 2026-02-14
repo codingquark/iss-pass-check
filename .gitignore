@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.direnv/
+.envrc
+.pytest_cache/
+.ruff_cache/
+de421.bsp
+*.egg-info/
+dist/
+build/

@@ -1,0 +1,135 @@
+.TH ISS-NEXT-PASS 1 "2025-03-01" "iss-next-pass" "User Commands"
+.SH NAME
+iss-next-pass \- find the next visible ISS pass over your location
+.SH SYNOPSIS
+.B python iss_next_pass.py
+[\fIOPTIONS\fR]
+.SH DESCRIPTION
+.B iss-next-pass
+predicts when the International Space Station will be visible from a given
+location.  It downloads up-to-date TLE orbital elements, computes rise/set
+times with Skyfield, checks that the ISS is sunlit while the observer is in
+twilight, and estimates apparent magnitude.
+.PP
+If no location is given, the observer's position is auto-detected from IP
+geolocation.
+.SH OPTIONS
+.SS "Location Options"
+.TP
+.BR \-l ", " \-\-location " " \fINAME\fR
+Location name (city, address, landmark).  Requires the
+.B geopy
+library.
+.TP
+.BR \-\-lat " " \fIDEGREES\fR
+Latitude of the observer (\-90 to 90).
+.TP
+.BR \-\-lon " " \fIDEGREES\fR
+Longitude of the observer (\-180 to 180).
+.SS "Visibility Options"
+.TP
+.BR \-\-twilight " " \fIMODE\fR
+Sky darkness threshold.  One of:
+.BR civil " (\-6 deg, default),"
+.BR nautical " (\-12 deg),"
+.BR astronomical " (\-18 deg),"
+.BR any " (sunset)."
+.TP
+.BR \-\-min\-magnitude " " \fIMAG\fR
+Maximum apparent magnitude to accept.  Lower values are brighter.
+Default: 3.0.
+.TP
+.BR \-\-altitude " " \fIDEGREES\fR
+Minimum altitude above the horizon in degrees.  Default: 10.
+.SS "Search Options"
+.TP
+.BR \-n ", " \-\-count " " \fIN\fR
+Number of passes to find.  Default: 1.
+.TP
+.BR \-d ", " \-\-days " " \fIN\fR
+Number of days to search ahead.  Default: 2.
+.SS "Output Options"
+.TP
+.BR \-f ", " \-\-format " " \fIFMT\fR
+Output format.  One of
+.BR simple " (default),"
+.BR table ","
+.BR json "."
+.TP
+.BR \-v ", " \-\-verbose
+Show detailed debug information.
+.SS "Notification Options"
+.TP
+.B \-\-setup\-notify
+Launch interactive setup for Signal pass notifications.
+.TP
+.B \-\-check\-notify
+Check for upcoming passes and send a notification if one is imminent.
+Designed to be called by cron or launchd.
+.TP
+.BR \-\-notify\-config " " \fIPATH\fR
+Path to the notification config JSON file.
+Default: \fI~/.config/iss-pass-notify.json\fR.
+.TP
+.B \-\-install\-launchd
+Install a macOS LaunchAgent that runs \fB\-\-check\-notify\fR every 15 minutes.
+.TP
+.B \-\-uninstall\-launchd
+Remove the macOS LaunchAgent.
+.SH FILES
+.TP
+.I ~/.config/iss-pass-notify.json
+Notification configuration (location, Signal numbers, twilight mode, window).
+.TP
+.I ~/.local/share/iss-pass-notify/state.json
+Tracks which passes have already been notified.  Entries older than 48 hours
+are automatically pruned.
+.TP
+.I ~/Library/LaunchAgents/com.iss-pass-notify.checker.plist
+macOS LaunchAgent definition created by \fB\-\-install\-launchd\fR.
+.TP
+.I de421.bsp
+JPL planetary ephemeris used for sun position calculations.  Located in the
+same directory as the script.
+.SH EXAMPLES
+Find the next visible pass, auto-detecting location:
+.PP
+.RS
+python iss_next_pass.py
+.RE
+.PP
+Search by city name and show 5 passes in a table:
+.PP
+.RS
+python iss_next_pass.py \-\-location "London" \-\-count 5 \-\-format table
+.RE
+.PP
+Use coordinates with a wider search window:
+.PP
+.RS
+python iss_next_pass.py \-\-lat 48.8566 \-\-lon 2.3522 \-\-days 7
+.RE
+.PP
+Set up Signal notifications:
+.PP
+.RS
+python iss_next_pass.py \-\-setup\-notify
+.RE
+.PP
+Install periodic checks via launchd:
+.PP
+.RS
+python iss_next_pass.py \-\-install\-launchd
+.RE
+.SH EXIT STATUS
+.TP
+.B 0
+Success.
+.TP
+.B 1
+Error (invalid arguments, network failure, missing config, geocoding failure).
+.SH SEE ALSO
+.BR signal-cli (1),
+.BR launchd.plist (5)
+.SH AUTHORS
+Dhavan Vaidya, Claude (Anthropic).
