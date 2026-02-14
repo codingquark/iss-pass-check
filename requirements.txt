@@ -1,5 +1,6 @@
 certifi==2024.8.30
 charset-normalizer==3.3.2
+geopy==2.4.1
 idna==3.8
 jplephem==2.22
 numpy==1.24.4
@@ -7,3 +8,7 @@ requests==2.32.3
 sgp4==2.23
 skyfield==1.49
 urllib3==2.2.3
+
+# Testing
+pytest==7.4.3
+pytest-mock==3.12.0
