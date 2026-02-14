@@ -580,6 +580,346 @@ class TestConstants:
 
 
 # ============================================================================
+# NOTIFICATION TESTS - Config Loading
+# ============================================================================
+
+
+class TestNotifyConfigLoading:
+    """Tests for notification config I/O."""
+
+    def test_load_missing_config(self, tmp_path):
+        """Test that loading a missing config returns None."""
+        result = iss.load_notify_config(str(tmp_path / "nonexistent.json"))
+        assert result is None
+
+    def test_load_valid_config(self, tmp_path):
+        """Test loading a valid config file."""
+        config_file = tmp_path / "config.json"
+        config_file.write_text(json.dumps({
+            "lat": 23.02,
+            "lon": 72.57,
+            "location_desc": "Ahmedabad",
+            "twilight": "civil",
+            "min_altitude": 10.0,
+            "max_magnitude": 3.0,
+            "signal_sender": "+1234567890",
+            "signal_recipient": "+0987654321",
+            "notify_window_minutes": 30,
+        }))
+        config = iss.load_notify_config(str(config_file))
+        assert config is not None
+        assert config.lat == 23.02
+        assert config.lon == 72.57
+        assert config.location_desc == "Ahmedabad"
+        assert config.signal_sender == "+1234567890"
+        assert config.signal_recipient == "+0987654321"
+        assert config.notify_window_minutes == 30
+
+    def test_load_config_bad_json(self, tmp_path):
+        """Test that invalid JSON returns None."""
+        config_file = tmp_path / "bad.json"
+        config_file.write_text("not json{{{")
+        result = iss.load_notify_config(str(config_file))
+        assert result is None
+
+    def test_load_config_missing_required_field(self, tmp_path):
+        """Test that missing required fields returns None."""
+        config_file = tmp_path / "incomplete.json"
+        config_file.write_text(json.dumps({"lat": 23.02}))  # missing lon
+        result = iss.load_notify_config(str(config_file))
+        assert result is None
+
+    def test_save_and_load_roundtrip(self, tmp_path):
+        """Test that saving and loading config preserves values."""
+        config_path = str(tmp_path / "config.json")
+        config = iss.NotifyConfig(
+            lat=51.5, lon=-0.12, location_desc="London",
+            signal_sender="+111", signal_recipient="+222",
+        )
+        iss.save_notify_config(config, config_path)
+        loaded = iss.load_notify_config(config_path)
+        assert loaded is not None
+        assert loaded.lat == 51.5
+        assert loaded.lon == -0.12
+        assert loaded.signal_sender == "+111"
+
+
+# ============================================================================
+# NOTIFICATION TESTS - State Management
+# ============================================================================
+
+
+class TestNotifyState:
+    """Tests for notification state I/O and dedup."""
+
+    def test_load_missing_state(self, tmp_path):
+        """Test loading state from a missing file returns empty dict."""
+        result = iss.load_notify_state(str(tmp_path / "missing.json"))
+        assert result == {}
+
+    def test_dedup_check(self, tmp_path):
+        """Test that a pass ID in state prevents re-notification."""
+        state_path = str(tmp_path / "state.json")
+        key = "2026-02-15T03:42:00Z"
+        state = {key: {"notified_at": "2026-02-15T03:12:00Z"}}
+        iss.save_notify_state(state, state_path)
+        loaded = iss.load_notify_state(state_path)
+        assert key in loaded
+
+    def test_state_prunes_old_entries(self, tmp_path):
+        """Test that entries older than 48h are pruned on save."""
+        state_path = str(tmp_path / "state.json")
+        old_key = "2020-01-01T00:00:00Z"
+        recent_key = (datetime.now(timezone.utc) - timedelta(hours=1)).replace(
+            second=0, microsecond=0, tzinfo=None
+        ).isoformat() + "Z"
+        state = {
+            old_key: {"notified_at": "2020-01-01T00:00:00Z"},
+            recent_key: {"notified_at": recent_key},
+        }
+        iss.save_notify_state(state, state_path)
+        loaded = iss.load_notify_state(state_path)
+        assert old_key not in loaded
+        assert recent_key in loaded
+
+
+# ============================================================================
+# NOTIFICATION TESTS - Message Formatting
+# ============================================================================
+
+
+class TestNotificationMessage:
+    """Tests for notification message formatting."""
+
+    def test_message_contains_key_info(self):
+        """Test that the notification message contains expected fields."""
+        now = datetime.now(timezone.utc)
+        rise = now + timedelta(minutes=28)
+        p = iss.PassInfo(
+            rise_time=rise,
+            set_time=rise + timedelta(minutes=4),
+            max_altitude_time=rise + timedelta(minutes=2),
+            duration_seconds=240.0,
+            max_altitude_degrees=62.0,
+            rise_azimuth=22.5,  # NNE
+            set_azimuth=157.5,  # SSE
+            max_magnitude=-1.2,
+            rise_magnitude=-0.5,
+            set_magnitude=0.5,
+            is_visible=True,
+        )
+        msg = iss.format_notification_message(p)
+        assert "ISS visible in" in msg
+        assert "62 deg" in msg
+        assert "-1.2 mag" in msg
+        assert "NNE" in msg
+        assert "SSE" in msg
+        assert "4 min" in msg
+        assert "IST" in msg
+
+
+# ============================================================================
+# NOTIFICATION TESTS - Signal Sending
+# ============================================================================
+
+
+class TestSendSignalNotification:
+    """Tests for send_signal_notification with mocked subprocess."""
+
+    def _make_config(self):
+        return iss.NotifyConfig(
+            lat=23.02, lon=72.57,
+            signal_sender="+111", signal_recipient="+222",
+        )
+
+    @patch("iss_next_pass.subprocess.run")
+    def test_success(self, mock_run):
+        """Test successful signal-cli call returns True."""
+        mock_run.return_value = MagicMock(returncode=0)
+        result = iss.send_signal_notification("hello", self._make_config())
+        assert result is True
+        mock_run.assert_called_once()
+        args = mock_run.call_args[0][0]
+        assert "signal-cli" in args
+        assert "+111" in args
+        assert "+222" in args
+
+    @patch("iss_next_pass.subprocess.run")
+    def test_failure_nonzero_exit(self, mock_run):
+        """Test that non-zero exit code returns False."""
+        mock_run.return_value = MagicMock(returncode=1)
+        result = iss.send_signal_notification("hello", self._make_config())
+        assert result is False
+
+    @patch("iss_next_pass.subprocess.run", side_effect=OSError("not found"))
+    def test_failure_oserror(self, mock_run):
+        """Test that OSError (missing binary) returns False."""
+        result = iss.send_signal_notification("hello", self._make_config())
+        assert result is False
+
+
+# ============================================================================
+# NOTIFICATION TESTS - run_check_notify Integration
+# ============================================================================
+
+
+class TestRunCheckNotify:
+    """Tests for run_check_notify with mocked dependencies."""
+
+    def _write_config(self, tmp_path):
+        config_path = str(tmp_path / "config.json")
+        config = iss.NotifyConfig(
+            lat=23.02, lon=72.57, location_desc="Ahmedabad",
+            signal_sender="+111", signal_recipient="+222",
+            notify_window_minutes=30,
+        )
+        iss.save_notify_config(config, config_path)
+        return config_path
+
+    @patch("iss_next_pass.NOTIFY_STATE_PATH", new_callable=lambda: property(lambda self: ""))
+    @patch("iss_next_pass.send_notification", return_value=True)
+    @patch("iss_next_pass.find_visible_passes")
+    @patch("iss_next_pass.get_iss_tle", return_value=["1 dummy", "2 dummy"])
+    def test_sends_notification_for_imminent_pass(
+        self, mock_tle, mock_find, mock_send, mock_state_path, tmp_path
+    ):
+        """Test that a pass within the window triggers a notification."""
+        now = datetime.now(timezone.utc)
+        rise = now + timedelta(minutes=20)
+        mock_find.return_value = [
+            iss.PassInfo(
+                rise_time=rise,
+                set_time=rise + timedelta(minutes=4),
+                max_altitude_time=rise + timedelta(minutes=2),
+                duration_seconds=240.0,
+                max_altitude_degrees=45.0,
+                rise_azimuth=0.0,
+                set_azimuth=180.0,
+                max_magnitude=-1.0,
+                rise_magnitude=-0.5,
+                set_magnitude=0.5,
+                is_visible=True,
+            )
+        ]
+        config_path = self._write_config(tmp_path)
+        state_path = str(tmp_path / "state.json")
+
+        with patch("iss_next_pass.NOTIFY_STATE_PATH", state_path):
+            iss.run_check_notify(config_path)
+
+        mock_send.assert_called_once()
+
+    @patch("iss_next_pass.send_notification")
+    @patch("iss_next_pass.find_visible_passes")
+    @patch("iss_next_pass.get_iss_tle", return_value=["1 dummy", "2 dummy"])
+    def test_skips_already_notified_pass(self, mock_tle, mock_find, mock_send, tmp_path):
+        """Test that an already-notified pass is skipped."""
+        now = datetime.now(timezone.utc)
+        rise = now + timedelta(minutes=20)
+        rise_key = rise.replace(second=0, microsecond=0, tzinfo=None).isoformat() + "Z"
+        mock_find.return_value = [
+            iss.PassInfo(
+                rise_time=rise,
+                set_time=rise + timedelta(minutes=4),
+                max_altitude_time=rise + timedelta(minutes=2),
+                duration_seconds=240.0,
+                max_altitude_degrees=45.0,
+                rise_azimuth=0.0,
+                set_azimuth=180.0,
+                max_magnitude=-1.0,
+                rise_magnitude=-0.5,
+                set_magnitude=0.5,
+                is_visible=True,
+            )
+        ]
+        config_path = self._write_config(tmp_path)
+        state_path = str(tmp_path / "state.json")
+        # Pre-populate state with this pass
+        iss.save_notify_state({rise_key: {"notified_at": now.isoformat() + "Z"}}, state_path)
+
+        with patch("iss_next_pass.NOTIFY_STATE_PATH", state_path):
+            iss.run_check_notify(config_path)
+
+        mock_send.assert_not_called()
+
+    @patch("iss_next_pass.send_notification")
+    @patch("iss_next_pass.find_visible_passes", return_value=[])
+    @patch("iss_next_pass.get_iss_tle", return_value=["1 dummy", "2 dummy"])
+    def test_no_passes_no_notification(self, mock_tle, mock_find, mock_send, tmp_path):
+        """Test that no passes means no notification."""
+        config_path = self._write_config(tmp_path)
+        state_path = str(tmp_path / "state.json")
+
+        with patch("iss_next_pass.NOTIFY_STATE_PATH", state_path):
+            iss.run_check_notify(config_path)
+
+        mock_send.assert_not_called()
+
+    @patch("iss_next_pass.send_notification")
+    @patch("iss_next_pass.find_visible_passes")
+    @patch("iss_next_pass.get_iss_tle", return_value=["1 dummy", "2 dummy"])
+    def test_skips_pass_too_far_out(self, mock_tle, mock_find, mock_send, tmp_path):
+        """Test that a pass beyond the window is not notified."""
+        now = datetime.now(timezone.utc)
+        rise = now + timedelta(minutes=60)  # beyond 30 min window
+        mock_find.return_value = [
+            iss.PassInfo(
+                rise_time=rise,
+                set_time=rise + timedelta(minutes=4),
+                max_altitude_time=rise + timedelta(minutes=2),
+                duration_seconds=240.0,
+                max_altitude_degrees=45.0,
+                rise_azimuth=0.0,
+                set_azimuth=180.0,
+                max_magnitude=-1.0,
+                rise_magnitude=-0.5,
+                set_magnitude=0.5,
+                is_visible=True,
+            )
+        ]
+        config_path = self._write_config(tmp_path)
+        state_path = str(tmp_path / "state.json")
+
+        with patch("iss_next_pass.NOTIFY_STATE_PATH", state_path):
+            iss.run_check_notify(config_path)
+
+        mock_send.assert_not_called()
+
+
+# ============================================================================
+# NOTIFICATION TESTS - CLI Arguments
+# ============================================================================
+
+
+class TestNotifyCLIArgs:
+    """Tests for notification CLI argument parsing."""
+
+    def test_check_notify_flag(self):
+        """Test parsing --check-notify flag."""
+        with patch("sys.argv", ["iss_next_pass.py", "--check-notify"]):
+            args = iss.parse_arguments()
+            assert args.check_notify is True
+
+    def test_setup_notify_flag(self):
+        """Test parsing --setup-notify flag."""
+        with patch("sys.argv", ["iss_next_pass.py", "--setup-notify"]):
+            args = iss.parse_arguments()
+            assert args.setup_notify is True
+
+    def test_notify_config_path(self):
+        """Test parsing --notify-config with custom path."""
+        with patch("sys.argv", ["iss_next_pass.py", "--notify-config", "/tmp/test.json"]):
+            args = iss.parse_arguments()
+            assert args.notify_config == "/tmp/test.json"
+
+    def test_notify_config_default(self):
+        """Test default notify-config path."""
+        with patch("sys.argv", ["iss_next_pass.py"]):
+            args = iss.parse_arguments()
+            assert args.notify_config == iss.NOTIFY_CONFIG_PATH
+
+
+# ============================================================================
 # Main Test Runner
 # ============================================================================
 
