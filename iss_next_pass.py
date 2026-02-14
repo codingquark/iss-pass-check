@@ -178,6 +178,11 @@ Examples:
   %(prog)s --location "London" --count 5 --format table
   %(prog)s --location "Tokyo" --twilight nautical --days 7
   %(prog)s --location "Mumbai" --twilight any --count 10 --format json
+
+Notification examples:
+  %(prog)s --setup-notify
+  %(prog)s --check-notify
+  %(prog)s --install-launchd
         """
     )
     
