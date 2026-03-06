@@ -17,7 +17,7 @@ import subprocess
 import sys
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
-from typing import List, Optional, Tuple
+from typing import Any, List, Mapping, Optional, Tuple
 
 import requests
 from skyfield.api import EarthSatellite, load, wgs84
@@ -64,6 +64,22 @@ class PassInfo:
     set_magnitude: float
     is_visible: bool
 
+    def to_dict(self) -> dict:
+        return {
+            "rise_time": self.rise_time.isoformat() + "Z",
+            "set_time": self.set_time.isoformat() + "Z",
+            "max_altitude_time": self.max_altitude_time.isoformat() + "Z",
+            "duration_seconds": int(self.duration_seconds),
+            "max_altitude_degrees": round(self.max_altitude_degrees, 1),
+            "rise_azimuth": round(self.rise_azimuth, 1),
+            "set_azimuth": round(self.set_azimuth, 1),
+            "rise_direction": azimuth_to_direction(self.rise_azimuth),
+            "set_direction": azimuth_to_direction(self.set_azimuth),
+            "max_magnitude": self.max_magnitude,
+            "rise_magnitude": self.rise_magnitude,
+            "set_magnitude": self.set_magnitude,
+        }
+
 
 @dataclass
 class NotifyConfig:
@@ -78,6 +94,23 @@ class NotifyConfig:
     signal_recipient: str = ""
     notify_window_minutes: int = NOTIFY_WINDOW_MINUTES
 
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> 'NotifyConfig':
+        return cls(
+            lat=float(data['lat']),
+            lon=float(data['lon']),
+            location_desc=str(data.get('location_desc') or ''),
+            twilight=str(data.get('twilight') or DEFAULT_TWILIGHT),
+            min_altitude=float(data.get('min_altitude', MIN_ALTITUDE_DEGREES)),
+            max_magnitude=float(data.get('max_magnitude', DEFAULT_MAX_MAGNITUDE)),
+            signal_sender=str(data.get('signal_sender') or ''),
+            signal_recipient=str(data.get('signal_recipient') or ''),
+            notify_window_minutes=int(data.get('notify_window_minutes', NOTIFY_WINDOW_MINUTES)),
+        )
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
 
 def _write_json(path: str, data: dict) -> None:
     """Write a dict as JSON to path, creating parent dirs as needed."""
@@ -87,31 +120,32 @@ def _write_json(path: str, data: dict) -> None:
         f.write('\n')
 
 
+def _load_json(path: str) -> Optional[dict]:
+    try:
+        with open(path) as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
 def load_notify_config(path: str = NOTIFY_CONFIG_PATH) -> Optional['NotifyConfig']:
     """Load notification config from JSON file. Returns None if missing or invalid."""
     path = os.path.expanduser(path)
     if not os.path.exists(path):
         return None
+    data = _load_json(path)
+    if data is None:
+        return None
     try:
-        with open(path) as f:
-            data = json.load(f)
-        return NotifyConfig(
-            lat=float(data['lat']), lon=float(data['lon']),
-            location_desc=data.get('location_desc', ''),
-            twilight=data.get('twilight', DEFAULT_TWILIGHT),
-            min_altitude=float(data.get('min_altitude', MIN_ALTITUDE_DEGREES)),
-            max_magnitude=float(data.get('max_magnitude', DEFAULT_MAX_MAGNITUDE)),
-            signal_sender=data.get('signal_sender', ''),
-            signal_recipient=data.get('signal_recipient', ''),
-            notify_window_minutes=int(data.get('notify_window_minutes', NOTIFY_WINDOW_MINUTES)),
-        )
-    except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+        return NotifyConfig.from_dict(data)
+    except (KeyError, TypeError, ValueError):
         return None
 
 
 def save_notify_config(config: 'NotifyConfig', path: str = NOTIFY_CONFIG_PATH) -> None:
     """Save notification config to JSON file."""
-    _write_json(os.path.expanduser(path), asdict(config))
+    _write_json(os.path.expanduser(path), config.to_dict())
 
 
 def load_notify_state(path: str = NOTIFY_STATE_PATH) -> dict:
@@ -119,25 +153,28 @@ def load_notify_state(path: str = NOTIFY_STATE_PATH) -> dict:
     path = os.path.expanduser(path)
     if not os.path.exists(path):
         return {}
+    data = _load_json(path)
+    return data or {}
+
+
+def _parse_state_timestamp(key: str) -> Optional[datetime]:
     try:
-        with open(path) as f:
-            return json.load(f)
-    except (json.JSONDecodeError, OSError):
-        return {}
+        return datetime.fromisoformat(key.rstrip('Z')).replace(tzinfo=timezone.utc)
+    except (ValueError, TypeError):
+        return None
 
 
 def save_notify_state(state: dict, path: str = NOTIFY_STATE_PATH) -> None:
     """Save notification state, pruning entries older than 48 hours."""
     path = os.path.expanduser(path)
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=48)
-    pruned = {}
-    for key, val in state.items():
-        try:
-            ts = datetime.fromisoformat(key.rstrip('Z')).replace(tzinfo=timezone.utc)
-            if ts > cutoff:
-                pruned[key] = val
-        except (ValueError, TypeError):
-            pass
+    refs = [ts for key in state.keys() if (ts := _parse_state_timestamp(key)) is not None]
+    ref_time = max(refs) if refs else datetime.now(timezone.utc)
+    cutoff = ref_time - timedelta(hours=48)
+    pruned = {
+        key: val
+        for key, val in state.items()
+        if (ts := _parse_state_timestamp(key)) is not None and ts > cutoff
+    }
     _write_json(path, pruned)
 
 
@@ -479,20 +516,7 @@ def format_json(passes: List[PassInfo], location_desc: str, lat: float, lon: flo
     """Format passes as JSON."""
     data = {
         "location": {"description": location_desc, "latitude": lat, "longitude": lon},
-        "passes": [{
-            "rise_time": p.rise_time.isoformat() + "Z",
-            "set_time": p.set_time.isoformat() + "Z",
-            "max_altitude_time": p.max_altitude_time.isoformat() + "Z",
-            "duration_seconds": int(p.duration_seconds),
-            "max_altitude_degrees": round(p.max_altitude_degrees, 1),
-            "rise_azimuth": round(p.rise_azimuth, 1),
-            "set_azimuth": round(p.set_azimuth, 1),
-            "rise_direction": azimuth_to_direction(p.rise_azimuth),
-            "set_direction": azimuth_to_direction(p.set_azimuth),
-            "max_magnitude": p.max_magnitude,
-            "rise_magnitude": p.rise_magnitude,
-            "set_magnitude": p.set_magnitude,
-        } for p in passes],
+        "passes": [p.to_dict() for p in passes],
     }
     return json.dumps(data, indent=2)
 
@@ -535,12 +559,17 @@ def _pass_state_key(rise_time: datetime) -> str:
     return dt.isoformat() + 'Z'
 
 
-def run_check_notify(config_path: str = NOTIFY_CONFIG_PATH) -> None:
-    """Check for upcoming passes and send a notification if one is imminent."""
+def _require_notify_config(config_path: str) -> NotifyConfig:
     config = load_notify_config(config_path)
     if config is None:
         print("Error: No notification config found. Run --setup-notify first.")
         sys.exit(1)
+    return config
+
+
+def run_check_notify(config_path: str = NOTIFY_CONFIG_PATH) -> None:
+    """Check for upcoming passes and send a notification if one is imminent."""
+    config = _require_notify_config(config_path)
 
     state = load_notify_state(NOTIFY_STATE_PATH)
     tle = get_iss_tle()
@@ -655,10 +684,7 @@ def _generate_plist(config_path: str) -> str:
 
 def install_launchd(config_path: str = NOTIFY_CONFIG_PATH) -> None:
     """Install a macOS LaunchAgent for periodic pass checks."""
-    config = load_notify_config(config_path)
-    if config is None:
-        print("Error: No notification config found. Run --setup-notify first.")
-        sys.exit(1)
+    _require_notify_config(config_path)
 
     log_dir = os.path.expanduser('~/.local/share/iss-pass-notify')
     os.makedirs(log_dir, exist_ok=True)

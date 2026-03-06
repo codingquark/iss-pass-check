@@ -622,6 +622,13 @@ class TestNotifyConfigLoading:
         result = iss.load_notify_config(str(config_file))
         assert result is None
 
+    def test_load_config_non_object_json(self, tmp_path):
+        """Test that non-object JSON returns None."""
+        config_file = tmp_path / "list.json"
+        config_file.write_text(json.dumps(["not", "a", "config"]))
+        result = iss.load_notify_config(str(config_file))
+        assert result is None
+
     def test_load_config_missing_required_field(self, tmp_path):
         """Test that missing required fields returns None."""
         config_file = tmp_path / "incomplete.json"
@@ -655,6 +662,13 @@ class TestNotifyState:
     def test_load_missing_state(self, tmp_path):
         """Test loading state from a missing file returns empty dict."""
         result = iss.load_notify_state(str(tmp_path / "missing.json"))
+        assert result == {}
+
+    def test_load_state_non_object_json(self, tmp_path):
+        """Test that non-object JSON state is treated as empty."""
+        state_file = tmp_path / "state.json"
+        state_file.write_text(json.dumps(["not", "state"]))
+        result = iss.load_notify_state(str(state_file))
         assert result == {}
 
     def test_dedup_check(self, tmp_path):
