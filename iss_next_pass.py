@@ -268,7 +268,7 @@ def geocode_location(location_name: str) -> Tuple[Optional[float], Optional[floa
             return location.latitude, location.longitude, location.address
         print(f"Error: Could not find location '{location_name}'.")
         print("Try a more specific location name or use coordinates directly.")
-    except GeocoderTimedOut:
+    except (GeocoderTimedOut, GeocoderServiceError):
         print("Error: Geocoding service timed out. Please try again.")
     except Exception as e:
         print(f"Error geocoding location: {e}")
@@ -344,7 +344,7 @@ def get_iss_tle() -> List[str]:
         except Exception as e:
             last_error = f"{name}: {e}"
 
-    print(f"Error: Could not retrieve ISS TLE data from any source.")
+    print("Error: Could not retrieve ISS TLE data from any source.")
     if last_error:
         print(f"Last error: {last_error}")
     print("Check your internet connection and try again.")
@@ -703,12 +703,12 @@ def install_launchd(config_path: str = NOTIFY_CONFIG_PATH) -> None:
         print(f"Error loading LaunchAgent: {result.stderr.strip()}")
         sys.exit(1)
 
-    print(f"LaunchAgent installed and loaded.")
+    print("LaunchAgent installed and loaded.")
     print(f"  Plist: {LAUNCHD_PLIST_PATH}")
     print(f"  Logs:  {log_dir}/launchd.log")
-    print(f"  Runs every 15 minutes. To check manually:")
+    print("  Runs every 15 minutes. To check manually:")
     print(f"    python3 {os.path.abspath(__file__)} --check-notify")
-    print(f"\nTo uninstall:")
+    print("\nTo uninstall:")
     print(f"  python3 {os.path.abspath(__file__)} --uninstall-launchd")
 
 
