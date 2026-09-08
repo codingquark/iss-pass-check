@@ -24,7 +24,7 @@ from skyfield.api import EarthSatellite, load, wgs84
 
 try:
     from geopy.geocoders import Nominatim
-    from geopy.exc import GeocoderTimedOut, GeocoderServiceError
+    from geopy.exc import GeocoderTimedOut
     GEOPY_AVAILABLE = True
 except ImportError:
     GEOPY_AVAILABLE = False
@@ -33,6 +33,7 @@ MIN_ALTITUDE_DEGREES = 10.0
 DEFAULT_MAX_MAGNITUDE = 3.0
 ISS_INTRINSIC_MAGNITUDE = -1.8
 ISS_STANDARD_DISTANCE = 1000.0
+INVISIBLE_MAGNITUDE = 99.0
 
 TWILIGHT_THRESHOLDS = {
     'civil': -6.0, 'nautical': -12.0, 'astronomical': -18.0, 'any': 0.0,
@@ -246,11 +247,16 @@ Notification examples:
 
 def validate_coordinates(lat: float, lon: float) -> Tuple[bool, str]:
     """Validate latitude and longitude values."""
-    if lat < -90 or lat > 90:
+    if not -90 <= lat <= 90:
         return False, f"Latitude must be between -90 and 90 degrees (got {lat})."
-    if lon < -180 or lon > 180:
+    if not -180 <= lon <= 180:
         return False, f"Longitude must be between -180 and 180 degrees (got {lon})."
     return True, ""
+
+
+def _is_valid_tle_lines(line1: Optional[str], line2: Optional[str]) -> bool:
+    """Validate that two lines look like a TLE pair."""
+    return bool(line1 and line2 and line1.startswith('1 ') and line2.startswith('2 '))
 
 
 def geocode_location(location_name: str) -> Tuple[Optional[float], Optional[float], Optional[str]]:
@@ -339,7 +345,7 @@ def get_iss_tle() -> List[str]:
                 start = 1 if len(lines) >= 3 else 0
                 line1, line2 = lines[start].strip(), lines[start + 1].strip()
 
-            if line1 and line2 and line1.startswith('1 ') and line2.startswith('2 '):
+            if _is_valid_tle_lines(line1, line2):
                 return [line1, line2]
         except Exception as e:
             last_error = f"{name}: {e}"
@@ -394,9 +400,9 @@ def find_visible_passes(
     def visibility(t) -> Tuple[bool, float]:
         """Check if ISS is visible and return magnitude."""
         if not satellite.at(t).is_sunlit(eph):
-            return False, 99.0
+            return False, INVISIBLE_MAGNITUDE
         if obs_pos.at(t).observe(sun).apparent().altaz()[0].degrees >= twilight_threshold:
-            return False, 99.0
+            return False, INVISIBLE_MAGNITUDE
         _, _, distance, phase_angle = iss_info(t)
         magnitude = calculate_iss_magnitude(distance, phase_angle)
         return magnitude <= max_magnitude, magnitude
@@ -425,9 +431,9 @@ def find_visible_passes(
                 _, set_az, _, _ = iss_info(set_time)
                 check_times = [rise_time] + ([max_time] if max_time is not None else []) + [set_time]
                 results = [visibility(t) for t in check_times]
-                best_magnitude = min((mag for vis, mag in results if vis), default=99.0)
+                best_magnitude = min((mag for vis, mag in results if vis), default=INVISIBLE_MAGNITUDE)
 
-                if best_magnitude < 99.0:
+                if best_magnitude < INVISIBLE_MAGNITUDE:
                     _, rise_mag = visibility(rise_time)
                     _, set_mag = visibility(set_time)
                     duration = (set_time.utc_datetime() - rise_time.utc_datetime()).total_seconds()
@@ -441,8 +447,8 @@ def find_visible_passes(
                         rise_azimuth=rise_az,
                         set_azimuth=set_az,
                         max_magnitude=best_magnitude,
-                        rise_magnitude=rise_mag if rise_mag < 99 else best_magnitude,
-                        set_magnitude=set_mag if set_mag < 99 else best_magnitude,
+                        rise_magnitude=rise_mag if rise_mag < INVISIBLE_MAGNITUDE else best_magnitude,
+                        set_magnitude=set_mag if set_mag < INVISIBLE_MAGNITUDE else best_magnitude,
                         is_visible=True,
                     ))
 
