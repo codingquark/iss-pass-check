@@ -15,7 +15,6 @@ import json
 import math
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch, MagicMock
-from dataclasses import dataclass
 import sys
 import os
 
@@ -560,7 +559,6 @@ class TestConstants:
 
     def test_twilight_thresholds_order(self):
         """Test that twilight thresholds increase in darkness."""
-        values = list(iss.TWILIGHT_THRESHOLDS.values())
         # Should go from least dark to most dark
         assert iss.TWILIGHT_THRESHOLDS["any"] > iss.TWILIGHT_THRESHOLDS["civil"]
         assert iss.TWILIGHT_THRESHOLDS["civil"] > iss.TWILIGHT_THRESHOLDS["nautical"]
